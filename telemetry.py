@@ -176,23 +176,45 @@ def main():
     axs[2].set_ylabel('GPU Util %')
     axs[2].set_xlabel('Time (s)')
     plt.tight_layout(pad=4.0)
+    stats_text = fig.text(0.5, 0.02, '', ha='center', va='bottom',
+                          family='monospace', fontsize=12,
+                          bbox=dict(facecolor='white', alpha=0.5, edgecolor='none')
+                          )
 
     # Data buffers for plotting
     x_data, y_cpu, y_ram, y_gpu_util, y_vram = [], [], [], [], []
     start_time = time.time()
 
+    # Variables for cumulative CPU and GPU time
+    cpu_time_cumulative = 0.
+    gpu_time_cumulative = 0.
+
     def update(frame):
+        nonlocal cpu_time_cumulative, gpu_time_cumulative
+
         with data_store.lock:
             curr_cpu = data_store.cpu_percent
             curr_ram = data_store.ram_mb
             curr_gpu = data_store.gpu_metrics[0]['util'] if data_store.gpu_metrics else 0
             curr_vram = data_store.gpu_metrics[0]['vram'] if data_store.gpu_metrics else 0
             
-        x_data.append(time.time() - start_time)
+        measurement_time = time.time() - start_time
+        x_data.append(measurement_time)
         y_cpu.append(curr_cpu)
         y_ram.append(curr_ram)
         y_gpu_util.append(curr_gpu)
         y_vram.append(curr_vram)
+
+        # Update CPU and GPU time
+        delta_t = measurement_time - x_data[-2] if len(x_data) > 1 else args.frequency
+        cpu_time_cumulative += delta_t * curr_cpu / 100.
+        gpu_time_cumulative += delta_t * curr_gpu / 100.
+
+        # Update the text display string
+        stats_string = (
+            f"CPU Time: {cpu_time_cumulative:>8.2f} CPU-s || GPU Time: {gpu_time_cumulative:>8.2f} GPU-s"
+        )
+        stats_text.set_text(stats_string)
         
         if len(x_data) > (60 / args.frequency):
             x_data.pop(0); y_cpu.pop(0); y_ram.pop(0); y_gpu_util.pop(0); y_vram.pop(0)
@@ -207,14 +229,14 @@ def main():
         for ax in axs:
             ax.set_xlim(x_data[0], x_data[-1])
             if ax == axs[0]: 
-                ax.set_ylim(min(y_cpu)-1, max(y_cpu)+1)
+                ax.set_ylim(-1, max(y_cpu)+1)
             if ax == axs[1]: 
                 # Ensure a minimum floor of 1.0 to prevent the line from disappearing at 0
                 ax.set_ylim(0, max(1.0, max(max(y_ram), max(y_vram)) * 1.1))
             if ax == axs[2]: 
-                ax.set_ylim(min(y_gpu_util)-1, max(y_gpu_util)+1)
+                ax.set_ylim(-1, max(y_gpu_util)+1)
 
-        return line_cpu, line_ram, line_vram, line_gpu
+        return line_cpu, line_ram, line_vram, line_gpu, stats_text
 
     ani = FuncAnimation(fig, update, interval=int(args.frequency * 1000))
     plt.show()
