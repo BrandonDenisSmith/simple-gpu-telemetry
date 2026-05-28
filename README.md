@@ -1,3 +1,33 @@
+# Super Simple GPU Telemetry
+
+![Example of what telemetry looks like for Ollama](telemetry.jpg)
+
+This is a deliberately simple application for collecting telemetry on a single
+GPU application. It utilizes `psutil` and `nvidia-ml-py` to collect CPU, GPU,
+and RAM/VRAM utilization and presents them in a live `matplotlib` plot. It also
+performs simple calculations of CPU and GPU time used and displays them with the
+live telemetry. Process monitoring and logging are performed in separate threads
+while the main thread handles plotting.
+
+# Installation
+
+I highly recommend that you set up set up a virtual environment for running .
+For example, using Python 3's `venv` module:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+# Usage
+
+```sh
+python simple-gpu-telemetry.py [-h] [-f FREQUENCY] [-o OUTPUT] [-g GPU] process_name
+```
+
+# License
+
 Unlicense
 
 This is free and unencumbered software released into the public domain.

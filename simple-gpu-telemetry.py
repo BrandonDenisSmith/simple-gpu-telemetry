@@ -11,6 +11,12 @@ import pynvml
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
+################################################################################
+################################################################################
+# The functions and classes contained in this block (enclosed by double hash
+# lines on top and bottom) were designed entirely by a self-hosted instance of
+# Gemma 4.
+################################################################################
 @dataclass
 class TelemetryData:
     # Shared data structure to hold the latest metrics
@@ -122,12 +128,18 @@ def logger_worker(target_pid, interval, data_store, filename):
                 writer.writerow(row)
                 f.flush()
             time.sleep(interval)
+################################################################################
+################################################################################
 
+# This function was developed with significant assistance from a self-hosted
+# instance of Gemma 4.
 def main():
     parser = argparse.ArgumentParser(description="Process Telemetry Collector")
     parser.add_argument("process_name", help="Name of the process to monitor")
     parser.add_argument("-f", "--frequency", type=float, default=1.0, help="Sampling frequency in seconds (default: 1.0)")
     parser.add_argument("-o", "--output", default="telemetry_log.csv", help="Output CSV file (default: telemetry_log.csv)")
+    # TODO: Handle multiple GPUs
+    parser.add_argument("-g", "--gpu", type=int, default=0, help="Index of GPU to monitor (default: 0)")
     args = parser.parse_args()
 
     process = find_process_by_name(args.process_name)
@@ -195,8 +207,9 @@ def main():
         with data_store.lock:
             curr_cpu = data_store.cpu_percent
             curr_ram = data_store.ram_mb
-            curr_gpu = data_store.gpu_metrics[0]['util'] if data_store.gpu_metrics else 0
-            curr_vram = data_store.gpu_metrics[0]['vram'] if data_store.gpu_metrics else 0
+            # TODO: Handle multiple GPUs.
+            curr_gpu = data_store.gpu_metrics[args.gpu]['util'] if data_store.gpu_metrics else 0
+            curr_vram = data_store.gpu_metrics[args.gpu]['vram'] if data_store.gpu_metrics else 0
             
         measurement_time = time.time() - start_time
         x_data.append(measurement_time)
@@ -208,6 +221,7 @@ def main():
         # Update CPU and GPU time
         delta_t = measurement_time - x_data[-2] if len(x_data) > 1 else args.frequency
         cpu_time_cumulative += delta_t * curr_cpu / 100.
+        # TODO: Update to "weight" different GPUs by performance tier.
         gpu_time_cumulative += delta_t * curr_gpu / 100.
 
         # Update the text display string
