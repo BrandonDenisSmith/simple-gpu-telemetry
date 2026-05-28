@@ -28,20 +28,37 @@ def find_process_by_name(name):
     return None
 
 def cpu_worker(process, interval, data_store):
-    """Thread for collecting aggregated CPU and RAM telemetry for process and all children."""
+    """Thread for collecting aggregated CPU and RAM telemetry using a process cache."""
+    # Cache to store psutil.Process objects so cpu_percent() has a reference point
+    process_cache = {} 
+    
     while True:
         try:
-            # Get the main process + all recursive children
+            # Get current process tree
             all_procs = [process] + process.children(recursive=True)
             total_cpu = 0.0
             total_ram = 0.0
             
+            current_pids = set()
             for p in all_procs:
+                pid = p.pid
+                current_pids.add(pid)
+                
+                # If this is a new process in the tree, add it to our cache
+                if pid not in process_cache:
+                    process_cache[pid] = p
+                    # First call to cpu_percent always returns 0.0; this establishes the baseline
+                    process_cache[pid].cpu_percent(interval=None)
+                
                 try:
-                    total_cpu += p.cpu_percent(interval=None)
-                    total_ram += p.memory_info().rss / (1024 * 1024)
+                    # Call cpu_percent on the CACHED object to get the actual delta
+                    total_cpu += process_cache[pid].cpu_percent(interval=None)
+                    total_ram += process_cache[pid].memory_info().rss / (1024 * 1024)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
+
+            # Clean up the cache: remove processes that are no longer running
+            process_cache = {pid: proc for pid, proc in process_cache.items() if pid in current_pids}
 
             with data_store.lock:
                 data_store.cpu_percent = total_cpu
@@ -141,25 +158,8 @@ def main():
 
     # --- Plotting Section (Must be in Main Thread) ---
     plt.style.use('ggplot')
-    ##################################################################################
-    ##  old plot initialization that resulted in cut-off labels
-    ##################################################################################
-    # fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    # fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    # plt.subplots_adjust(left=0.2, bottom=0.1, right=0.95, top=0.9)
-    
-    # # Data buffers for plotting
-    # x_data = []
-    # y_cpu = []
-    # y_ram = []
-    # y_vram = []
-    # y_gpu_util = [] # Simplification: tracks the first GPU found
-    
-    # start_time = time.time()
-    ##################################################################################
 
     fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    plt.subplots_adjust(left=0.15, bottom=0.1, right=0.95, top=0.9)
     
     # Initialize empty lines. We store them in a list to update them later.
     # This is MUCH more efficient than cla() and prevents labels from jumping/clipping.
@@ -180,48 +180,6 @@ def main():
     # Data buffers for plotting
     x_data, y_cpu, y_ram, y_gpu_util, y_vram = [], [], [], [], []
     start_time = time.time()
-
-    ##################################################################################
-    ##  old update loop
-    ##################################################################################
-    # def update(frame):
-    #     with data_store.lock:
-    #         curr_cpu = data_store.cpu_percent
-    #         curr_ram = data_store.ram_mb
-    #         # Take the first GPU's utilization if any exist
-    #         curr_gpu = data_store.gpu_metrics[1]['util'] if data_store.gpu_metrics else 0
-    #         curr_vram = data_store.gpu_metrics[1]['vram'] if data_store.gpu_metrics else 0
-    #         
-    #     x_data.append(time.time() - start_time)
-    #     y_cpu.append(curr_cpu)
-    #     y_ram.append(curr_ram)
-    #     y_vram.append(curr_vram)
-    #     y_gpu_util.append(curr_gpu)
-    #     
-    #     # Keep only last 60 seconds of data
-    #     if len(x_data) > (60 / args.frequency):
-    #         x_data.pop(0)
-    #         y_cpu.pop(0)
-    #         y_ram.pop(0)
-    #         y_gpu_util.pop(0)
-    #         y_vram.pop(0)
-
-    #     axs[0].cla()
-    #     axs[0].plot(x_data, y_cpu, color='r')
-    #     axs[0].set_ylabel('CPU %')
-    #     axs[0].set_title(f'Telemetry for {args.process_name}')
-
-    #     axs[1].cla()
-    #     axs[1].plot(x_data, y_ram, color='b')
-    #     axs[1].plot(x_data, y_vram, color='g')
-    #     axs[1].set_ylabel('Memory (MB)')
-    #     axs[1].legend(loc='upper left')
-
-    #     axs[2].cla()
-    #     axs[2].plot(x_data, y_gpu_util, color='b')
-    #     axs[2].set_ylabel('GPU Util %')
-    #     axs[2].set_xlabel('Time (s)')
-    ##################################################################################
 
     def update(frame):
         with data_store.lock:
