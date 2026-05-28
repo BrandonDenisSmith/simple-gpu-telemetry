@@ -28,53 +28,60 @@ def find_process_by_name(name):
     return None
 
 def cpu_worker(process, interval, data_store):
-    """Thread for collecting CPU and RAM telemetry."""
-    # Initial call to cpu_percent often returns 0.0
-    process.cpu_percent(interval=None) 
-    
+    """Thread for collecting aggregated CPU and RAM telemetry for process and all children."""
     while True:
         try:
+            # Get the main process + all recursive children
+            all_procs = [process] + process.children(recursive=True)
+            total_cpu = 0.0
+            total_ram = 0.0
+            
+            for p in all_procs:
+                try:
+                    total_cpu += p.cpu_percent(interval=None)
+                    total_ram += p.memory_info().rss / (1024 * 1024)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
             with data_store.lock:
-                # cpu_percent(interval=None) is non-blocking
-                data_store.cpu_percent = process.cpu_percent(interval=None)
-                data_store.ram_mb = process.memory_info().rss / (1024 * 1024)
+                data_store.cpu_percent = total_cpu
+                data_store.ram_mb = total_ram
         except (psutil.NoSuchProcess, psutil.AccessDenied):
-            print("\n[!] Process lost. Stopping CPU worker.")
+            print("\n[!] Main process lost. Stopping CPU worker.")
             break
         time.sleep(interval)
 
 def gpu_worker(target_pid, interval, data_store):
-    """Thread for collecting GPU telemetry via NVML."""
+    """Thread for collecting GPU telemetry for the process tree."""
     pynvml.nvmlInit()
     device_count = pynvml.nvmlDeviceGetCount()
     
     while True:
         try:
+            # Find all PIDs in the process tree to check against the GPU
+            parent = psutil.Process(target_pid)
+            relevant_pids = {parent.pid} | {p.pid for p in parent.children(recursive=True)}
+            
             current_gpus = []
             for i in range(device_count):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                
-                # Check if our target PID is using this GPU
                 procs = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
-                is_using = any(p.pid == target_pid for p in procs)
                 
-                if is_using:
+                # Check if ANY PID in our process tree is using this GPU
+                if any(p.pid in relevant_pids for p in procs):
                     util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                     mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0 # mW to W
+                    power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0
                     
                     current_gpus.append({
-                        'id': i,
-                        'util': util.gpu,
-                        'vram': mem.used / (1024 * 1024),
-                        'power': power
+                        'id': i, 'util': util.gpu, 'vram': mem.used / (1024 * 1024), 'power': power
                     })
             
             with data_store.lock:
                 data_store.gpu_metrics = current_gpus
                 
-        except pynvml.NVMLError as e:
-            print(f"\n[!] GPU Error: {e}")
+        except (pynvml.NVMLError, psutil.NoSuchProcess) as e:
+            print(f"\n[!] GPU/Process Error: {e}")
             break
         time.sleep(interval)
 
@@ -168,6 +175,7 @@ def main():
     axs[1].legend(loc='upper left')
     axs[2].set_ylabel('GPU Util %')
     axs[2].set_xlabel('Time (s)')
+    plt.tight_layout(pad=4.0)
 
     # Data buffers for plotting
     x_data, y_cpu, y_ram, y_gpu_util, y_vram = [], [], [], [], []
@@ -240,15 +248,17 @@ def main():
         # Dynamically adjust the X-axis window to slide with time
         for ax in axs:
             ax.set_xlim(x_data[0], x_data[-1])
-            # Also auto-scale Y-axis based on current buffer
-            if ax == axs[0]: ax.set_ylim(min(y_cpu)-1, max(y_cpu)+1)
-            if ax == axs[1]: ax.set_ylim(0, max(max(y_ram), max(y_vram)) * 1.1)
-            if ax == axs[2]: ax.set_ylim(min(y_gpu_util)-1, max(y_gpu_util)+1)
+            if ax == axs[0]: 
+                ax.set_ylim(min(y_cpu)-1, max(y_cpu)+1)
+            if ax == axs[1]: 
+                # Ensure a minimum floor of 1.0 to prevent the line from disappearing at 0
+                ax.set_ylim(0, max(1.0, max(max(y_ram), max(y_vram)) * 1.1))
+            if ax == axs[2]: 
+                ax.set_ylim(min(y_gpu_util)-1, max(y_gpu_util)+1)
 
         return line_cpu, line_ram, line_vram, line_gpu
 
     ani = FuncAnimation(fig, update, interval=int(args.frequency * 1000))
-    plt.tight_layout()
     plt.show()
 
 if __name__ == "__main__":
