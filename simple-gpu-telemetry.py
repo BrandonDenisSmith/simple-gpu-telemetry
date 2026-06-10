@@ -113,7 +113,7 @@ def logger_worker(target_pid, interval, data_store, filename):
     with open(filename, 'w', newline='') as f:
         writer = csv.writer(f)
         # Header
-        header = ['timestamp', 'cpu_percent', 'ram_mb']
+        header = ['timestamp', 'cpu_percent', 'ram_mb', 'gpu_percent', 'gpu_vram', 'gpu_power']
         # We don't know how many GPUs there are until runtime, but we'll add them
         writer.writerow(header)
         
@@ -123,7 +123,7 @@ def logger_worker(target_pid, interval, data_store, filename):
                 row = [timestamp, data_store.cpu_percent, data_store.ram_mb]
                 # Append GPU data for all detected GPUs
                 for gpu in data_store.gpu_metrics:
-                    row.extend([f"gpu{gpu['id']}_util", gpu['util'], f"gpu{gpu['id']}_vram", gpu['vram'], f"gpu{gpu['id']}_power", gpu['power']])
+                    row.extend([gpu['util'], gpu['vram'], gpu['power']])
                 
                 writer.writerow(row)
                 f.flush()
